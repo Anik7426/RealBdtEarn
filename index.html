@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monetag App</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="//libtl.com/sdk.js" data-zone="9695690" data-sdk="show_9695690"></script>
+  <style>
+    body {margin:0;font-family:'Segoe UI',sans-serif;background:#fffafc;}
+    nav {display:flex;justify-content:space-around;position:fixed;bottom:0;width:100%;background:#ff4081;padding:10px 0;color:white;font-weight:bold;z-index:10;}
+    nav div {cursor:pointer;}
+    .section {display:none;padding:20px;text-align:center;}
+    .section.active {display:block;}
+    .profile-pic img {width:100px;height:100px;border-radius:50%;object-fit:cover;border:2px solid #ff4081;}
+    .info-box {font-size:18px;margin:10px 0;}
+    .btn {padding:14px 30px;font-size:18px;background:linear-gradient(135deg,#ff6a88,#ff99ac);color:white;border:none;border-radius:12px;cursor:pointer;margin:10px;transition:all 0.3s ease;}
+    .btn:hover {opacity:0.9;}
+    .form input,.form select {padding:12px;font-size:16px;border:1px solid #ddd;border-radius:8px;width:100%;margin-bottom:10px;}
+    .circular-progress {width:120px;height:120px;border-radius:50%;background:conic-gradient(#4caf50 0% 0%,#eee 0% 100%);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:20px;font-weight:bold;color:#333;flex-direction:column;}
+    .history-log {max-height:300px;overflow-y:auto;background:#f0f0f0;padding:10px;border-radius:10px;text-align:left;}
+    .history-log div {background:#fff;padding:10px;border-radius:8px;margin-bottom:10px;}
+    .history-log p {margin:5px 0;font-size:15px;}
+  </style>
+</head>
+<body>
+  <div id="home" class="section active">
+    <div class="profile-pic">
+      <img id="userPic" src="https://img.icons8.com/ios-filled/100/000000/user-male-circle.png" alt="Profile">
+    </div>
+    <h2 id="userName">👤 User Name</h2>
+    <div class="info-box">📺 Total Ads Watched: <span id="totalAds">0</span></div>
+    <div class="info-box">💰 Total Withdrawn: <span id="totalWithdraw">0</span> pts</div>
+    <div class="info-box">💼 Balance: <span id="userBalance">0</span> pts</div>
+    <button id="watchAdHome" class="btn watchAdBtn">🎬 Watch Ad</button>
+  </div>
+
+  <div id="earn" class="section">
+    <h3>🎁 Earn Points</h3>
+    <div class="circular-progress" id="progressCircle">
+      <span id="circlePercent">0%</span>
+    </div>
+    <p><strong>🔴 Watched today:</strong> <span id="todayWatched" style="color:red;">0</span> ads</p>
+    <p><strong>🟢 Remaining today:</strong> <span id="todayRemaining" style="color:green;">100</span> ads</p>
+    <div id="progressText">Ready to watch</div>
+    <button id="watchAd" class="btn watchAdBtn">🎬 Watch Ad</button>
+  </div>
+
+  <div id="withdraw" class="section">
+    <h3>💵 Withdraw Request</h3>
+    <p>💼 Your Balance: <strong><span id="withdrawBalance">0</span> pts</strong></p>
+    <div class="form">
+      <select id="method">
+        <option value="Bkash">Bkash</option>
+        <option value="Nagad">Nagad</option>
+        <option value="Rocket">Rocket</option>
+      </select>
+      <input type="number" id="amount" placeholder="Enter amount (min 10 pts)">
+      <input type="text" id="number" placeholder="Enter your number">
+      <button id="submitWithdraw" class="btn">📤 Submit</button>
+    </div>
+  </div>
+
+  <div id="history" class="section">
+    <h3>📜 Withdraw History</h3>
+    <div class="history-log" id="withdrawLog">
+      <p>No withdraw history yet.</p>
+    </div>
+  </div>
+
+  <nav>
+    <div onclick="switchSection('home')">🏠 Home</div>
+    <div onclick="switchSection('earn')">🎯 Earn</div>
+    <div onclick="switchSection('withdraw')">💵 Withdraw</div>
+    <div onclick="switchSection('history')">📜 History</div>
+  </nav>
+
+  <script>
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyqDsU77vrfvbZlbT3IbJYZ9CAI7fG7OSaCKErp9rKJELlcYv_onOP4T_JV6z0Rr1I4/exec";
+
+    Telegram.WebApp.ready();
+    const user = Telegram.WebApp.initDataUnsafe?.user;
+
+    if (!user) {
+        document.body.innerHTML = "Could not verify Telegram user. Please open this app through Telegram.";
+        throw new Error("Telegram user not found.");
+    }
+
+    const name = `${user.first_name || 'Unknown'} ${user.last_name || ''}`.trim();
+    document.getElementById("userName").textContent = `👤 ${name}`;
+
+    let localPoints = 0;
+    let localTotalAds = 0;
+    let localTotalWithdraw = 0;
+    let withdrawHistory = JSON.parse(localStorage.getItem('withdraw_history') || '[]');
+    
+    // Daily data will still be local to manage daily ad limit on the client side
+    const today = new Date().toISOString().split('T')[0];
+    let dailyData = JSON.parse(localStorage.getItem('daily_ad_data') || '{}');
+    if (dailyData.date !== today) {
+        dailyData = { date: today, views: 0 };
+        localStorage.setItem('daily_ad_data', JSON.stringify(dailyData));
+    }
+
+    window.addEventListener('load', () => {
+        fetch(`${SCRIPT_URL}?userId=${user.id}&firstName=${user.first_name}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    const userData = data.user;
+                    localPoints = userData.Points;
+                    localTotalAds = userData.TotalAdsWatched;
+                    localTotalWithdraw = userData.TotalWithdrawn;
+                    updateDisplays();
+                } else {
+                    alert("Error loading data: " + data.message);
+                }
+            }).catch(err => {
+                alert("Failed to connect to the server.");
+                console.error(err);
+            });
+    });
+
+    function updateDisplays() {
+        document.getElementById('totalAds').textContent = localTotalAds;
+        document.getElementById('totalWithdraw').textContent = localTotalWithdraw;
+        document.getElementById('userBalance').textContent = localPoints;
+        document.getElementById('withdrawBalance').textContent = localPoints;
+        
+        // Update daily watch info
+        document.getElementById('todayWatched').textContent = dailyData.views;
+        const remaining = 100 - dailyData.views;
+        document.getElementById('todayRemaining').textContent = remaining < 0 ? 0 : remaining;
+        const percent = Math.min((dailyData.views / 100) * 100, 100);
+        document.getElementById('circlePercent').textContent = `${Math.round(percent)}%`;
+        document.getElementById('progressCircle').style.background = `conic-gradient(#4caf50 0% ${percent}%, #eee ${percent}% 100%)`;
+
+        let historyHTML = withdrawHistory.length
+            ? withdrawHistory.map(h => `<div><p>📅 <strong>Date:</strong> ${h.date}</p><p>💰 <strong>Amount:</strong> ${h.amount} pts</p><p>📱 <strong>Method:</strong> ${h.method}</p><p>☎️ <strong>Number:</strong> ${h.number}</p></div>`).join('')
+            : '<p>No withdraw history yet.</p>';
+        document.getElementById('withdrawLog').innerHTML = historyHTML;
+    }
+
+    document.querySelectorAll('.watchAdBtn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (dailyData.views >= 100) {
+                return alert("You've reached the daily limit of 100 ads.");
+            }
+
+            const watchButton = document.getElementById('watchAd');
+            watchButton.disabled = true;
+            document.getElementById("progressText").textContent = "🎬 Showing Ad...";
+            
+            show_9695690();
+            
+            let adAborted = false;
+            window.addEventListener('blur', () => adAborted = true, { once: true });
+
+            setTimeout(() => {
+                if (adAborted) {
+                    alert("❌ You skipped the ad. Please watch again.");
+                    document.getElementById("progressText").textContent = "❌ Ad skipped.";
+                    watchButton.disabled = false;
+                    return;
+                }
+                let countdown = 15;
+                document.getElementById("progressText").textContent = `⏳ Please watch full ad (${countdown}s)`;
+                const interval = setInterval(() => {
+                    if (adAborted) {
+                        clearInterval(interval);
+                        alert("❌ You skipped the ad. Please watch again.");
+                        document.getElementById("progressText").textContent = "❌ Ad skipped.";
+                        watchButton.disabled = false;
+                        return;
+                    }
+                    countdown--;
+                    if (countdown > 0) {
+                        document.getElementById("progressText").textContent = `⏳ Please watch full ad (${countdown}s)`;
+                    } else {
+                        clearInterval(interval);
+                        const postData = {
+                            action: 'watchAd',
+                            user: { id: user.id, first_name: user.first_name }
+                        };
+                        fetch(SCRIPT_URL, {
+                            method: 'POST',
+                            body: JSON.stringify(postData)
+                        }).then(res => res.json()).then(data => {
+                            if (data.success) {
+                                localPoints = data.user.Points;
+                                localTotalAds = data.user.TotalAdsWatched;
+                                dailyData.views++;
+                                localStorage.setItem('daily_ad_data', JSON.stringify(dailyData));
+                                document.getElementById("progressText").textContent = "✅ Ad complete! 1 point added.";
+                                updateDisplays();
+                            } else {
+                                document.getElementById("progressText").textContent = "Error updating points.";
+                                alert("Error: " + data.message);
+                            }
+                            watchButton.disabled = false;
+                        }).catch(err => {
+                            alert("Failed to update points.");
+                            document.getElementById("progressText").textContent = "Ready to watch";
+                            watchButton.disabled = false;
+                        });
+                    }
+                }, 1000);
+            }, 2000);
+        });
+    });
+
+    document.getElementById('submitWithdraw').addEventListener('click', () => {
+        const btn = document.getElementById('submitWithdraw');
+        const amount = parseInt(document.getElementById('amount').value);
+        const method = document.getElementById('method').value;
+        const number = document.getElementById('number').value.trim();
+
+        if (!number || isNaN(amount) || amount < 10) {
+            return alert("Invalid input. Minimum 10 points.");
+        }
+        if (amount > localPoints) {
+            return alert("You do not have enough points.");
+        }
+
+        btn.disabled = true;
+        btn.textContent = "⏳ Sending...";
+
+        const postData = {
+            action: 'requestWithdraw',
+            user: { id: user.id, first_name: user.first_name },
+            amount: amount,
+            method: method,
+            number: number
+        };
+
+        fetch(SCRIPT_URL, {
+            method: 'POST',
+            body: JSON.stringify(postData),
+            headers: { 'Content-Type': 'application/json' }
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                localPoints = data.user.Points;
+                localTotalWithdraw = data.user.TotalWithdrawn;
+                
+                withdrawHistory.unshift({ date: new Date().toLocaleString(), amount: amount, method: method, number: number });
+                localStorage.setItem('withdraw_history', JSON.stringify(withdrawHistory));
+                
+                updateDisplays();
+                alert("✅ Withdraw request sent successfully!");
+            } else {
+                alert("Error: " + data.message);
+            }
+        }).catch(err => {
+            alert("Failed to send request.");
+        }).finally(() => {
+            btn.disabled = false;
+            btn.textContent = "📤 Submit";
+        });
+    });
+
+    function switchSection(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        // Initial call to update displays when switching sections, especially for balances.
+        updateDisplays();
+    }
+  </script>
+</body>
+</html>
